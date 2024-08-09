@@ -11,6 +11,7 @@ using Lumina.Excel.GeneratedSheets;
 using ECommons;
 using Dalamud.Interface.Utility;
 using Dalamud.Interface.Components;
+using AutoDuty.Managers;
 
 namespace AutoDuty.Windows;
 
@@ -19,7 +20,7 @@ public class Configuration : IPluginConfiguration
 {
     public HashSet<string> DoNotUpdatePathFiles { get; set; } = [];
 
-    public int Version { get; set; } = 111;
+    public int Version { get; set; } = 114;
     public int AutoRepairPct { get; set; } = 50;
     public int AutoGCTurninSlotsLeft = 5;
     public int LoopTimes = 1;
@@ -53,6 +54,10 @@ public class Configuration : IPluginConfiguration
     public bool AutoGCTurnin { get; set; } = false;
     public bool AutoGCTurninSlotsLeftBool = false;
     public bool AutoGCTurninSlotsLeftInput = false;
+    public bool AM = false;
+    public bool UnhideAM = false;
+    public bool EnableAutoRetainer = false;
+    public bool AutoBoiledEgg = false;
     public bool Support { get; set; } = false;
     public bool Trust { get; set; } = false;
     public bool Squadron { get; set; } = false;
@@ -94,6 +99,8 @@ public class Configuration : IPluginConfiguration
     {
         AutoDuty.PluginInterface.SavePluginConfig(this);
     }
+
+    public TrustMember?[] SelectedTrusts = new TrustMember?[3];
 }
 
 public static class ConfigTab
@@ -377,6 +384,19 @@ public static class ConfigTab
             Configuration.Save();
         }
         ImGui.SameLine(0, 5);
+
+        if (Configuration.UnhideAM)
+        {
+            if (ImGui.Checkbox("AM", ref Configuration.AM))
+            {
+                if (!AM_IPCSubscriber.IsEnabled)
+                    MainWindow.ShowPopup("DISCLAIMER", "AM Requires a plugin - Visit https://discord.gg/JzSxThjKnd\nDO NOT ASK OR DISCUSS THIS OPTION IN PUNI.SH DISCORD\nYOU HAVE BEEN WARNED!!!!!!!");
+                else if (Configuration.AM)
+                    MainWindow.ShowPopup("DISCLAIMER", "Enabling the usage of this option, you are agreeing to never discuss This option in Puni.sh Discord or to anyone in Puni.sh, you have been warned!!!");
+                Configuration.Save();
+            }
+        }
+        ImGui.SameLine(0, 5);
         using (var autoGcTurninDisabled = ImRaii.Disabled(!Deliveroo_IPCSubscriber.IsEnabled))
         {
             if (ImGui.Checkbox("Auto GC Turnin", ref autoGCTurnin))
@@ -413,20 +433,59 @@ public static class ConfigTab
                     }
                 }
             }
-            if (!Deliveroo_IPCSubscriber.IsEnabled)
+        }
+        
+        if (!Deliveroo_IPCSubscriber.IsEnabled)
+        {
+            if (Configuration.AutoGCTurnin)
             {
                 Configuration.AutoGCTurnin = false;
                 autoGCTurnin = false;
                 Configuration.Save();
-                ImGui.Text("* Auto GC Turnin Requires Deliveroo plugin");
-                ImGui.Text("Get @ https://git.carvel.li/liza/plugin-repo");
             }
+            ImGui.Text("* Auto GC Turnin Requires Deliveroo plugin");
+            ImGui.Text("Get @ https://git.carvel.li/liza/plugin-repo");
+        }
+
+        if (Configuration.UnhideAM && !AM_IPCSubscriber.IsEnabled)
+        {
+            if (Configuration.AM)
+            {
+                Configuration.AM = false;
+                Configuration.Save();
+            }
+            ImGui.Text("* AM Requires a plugin");
+            ImGui.Text("Visit https://discord.gg/JzSxThjKnd");
+            ImGui.Text("DO NOT ASK OR DISCUSS THIS OPTION IN PUNI.SH DISCORD");
+            ImGui.Text("YOU HAVE BEEN WARNED!!!!!!!");
         }
         ImGui.PushItemWidth(100 * ImGuiHelpers.GlobalScale);
-        if (ImGui.InputInt("(s) Wait time before after loop actions", ref Configuration.WaitTimeBeforeAfterLoopActions))
+        if (ImGui.InputInt("(s) Wait time between loops", ref Configuration.WaitTimeBeforeAfterLoopActions))
             Configuration.Save();
         ImGui.PopItemWidth();
+
+        using (var autoRetainerDisabled = ImRaii.Disabled(!AutoRetainer_IPCSubscriber.IsEnabled))
+        {
+            if (ImGui.Checkbox("Enable AutoRetainer Integration", ref Configuration.EnableAutoRetainer))
+                Configuration.Save();
+        }
+
+        if (!AutoRetainer_IPCSubscriber.IsEnabled)
+        {
+            if (Configuration.EnableAutoRetainer)
+            {
+                Configuration.EnableAutoRetainer = false;
+                Configuration.Save();
+            }
+            ImGui.Text("* AutoRetainer requires a plugin");
+            ImGui.Text("Visit https://puni.sh/plugin/AutoRetainer");
+        }
+
+        if (ImGui.Checkbox("Auto Consume Boiled Eggs", ref Configuration.AutoBoiledEgg))
+            Configuration.Save();
+
         ImGui.Separator();
+
         if (ImGui.Checkbox("Stop Looping @ Level", ref stopLevel))
         {
             Configuration.StopLevel = stopLevel;

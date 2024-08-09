@@ -10,6 +10,8 @@ using Lumina.Text;
 
 namespace AutoDuty.Helpers
 {
+    using FFXIVClientStructs.FFXIV.Client.Game.UI;
+
     internal static class ContentHelper
     {
         internal static Dictionary<uint, Content> DictionaryContent { get; set; } = [];
@@ -18,8 +20,11 @@ namespace AutoDuty.Helpers
         
         private static List<uint> ListVVDContent { get; set; } = [1069, 1137, 1176]; //[1069, 1075, 1076, 1137, 1155, 1156, 1176, 1179, 1180]; *Criterions
 
+
         internal class Content
         {
+            internal uint Id { get; set; }
+
             internal string? Name { get; set; }
 
             internal string? DisplayName { get; set; }
@@ -51,6 +56,8 @@ namespace AutoDuty.Helpers
             internal bool GCArmyContent { get; set; } = false;
 
             internal int GCArmyIndex { get; set; } = -1;
+
+            internal List<TrustMember> TrustMembers { get; set; } = new();
         }
 
         internal static void PopulateDuties()
@@ -82,6 +89,7 @@ namespace AutoDuty.Helpers
 
                 var content = new Content
                 {
+                    Id = contentFinderCondition.Content.Row,
                     Name = CleanName(contentFinderCondition.Name.RawString),
                     TerritoryType = contentFinderCondition.TerritoryType.Value.RowId,
                     ContentType = contentFinderCondition.ContentType.Value.RowId,
@@ -103,7 +111,25 @@ namespace AutoDuty.Helpers
 
                 if (content.DawnContent && listDawnContent.Where(dawnContent => dawnContent.Content.Value == contentFinderCondition).Any())
                     content.DawnIndex = listDawnContent.Where(dawnContent => dawnContent.Content.Value == contentFinderCondition).First().RowId < 32 ? (int)listDawnContent.Where(dawnContent => dawnContent.Content.Value == contentFinderCondition).First().RowId : (int)listDawnContent.Where(dawnContent => dawnContent.Content.Value == contentFinderCondition).First().RowId - 200;
-                
+
+                if (content.TrustContent)
+                {
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.AlisaieBlue]);
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.Alisaie]);
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.Thancred]);
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.Urianger]);
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.BestCatGirl]);
+                    content.TrustMembers.Add(TrustManager.members[content.ExVersion == 3 ?
+                                                                      TrustMemberName.Ryne :
+                                                                      TrustMemberName.Estinien
+                                                                 ]);
+                    content.TrustMembers.Add(TrustManager.members[TrustMemberName.Graha]);
+                    if (content.TerritoryType is >= 1097 and <= 1164)
+                        content.TrustMembers.Add(TrustManager.members[TrustMemberName.Zero]);
+                    if (content.ExVersion == 5)
+                        content.TrustMembers.Add(TrustManager.members[TrustMemberName.Krile]);
+                }
+
                 DictionaryContent.Add(contentFinderCondition.TerritoryType.Value.RowId, content);
             }
 
@@ -113,6 +139,9 @@ namespace AutoDuty.Helpers
         public static bool CanRun(this Content content, short level = -1, short ilvl = -1)
         {
             if ((AutoDuty.Plugin.Player?.GetRole() ?? CombatRole.NonCombat) == CombatRole.NonCombat)
+                return false;
+
+            if (!UIState.IsInstanceContentUnlocked(content.Id))
                 return false;
 
             if (level < 0) 

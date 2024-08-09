@@ -3,11 +3,22 @@ using ECommons.MathHelpers;
 using Lumina.Excel.GeneratedSheets;
 using System.Numerics;
 using System.Linq;
+using Dalamud.Plugin.Services;
+using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using ECommons.Throttlers;
+using AutoDuty.IPC;
+using FFXIVClientStructs.FFXIV.Client.Game;
+using ECommons;
+using FFXIVClientStructs.FFXIV.Client.UI;
 
 namespace AutoDuty.Helpers
 {
     internal static class MapHelper
     {
+        internal static unsafe bool IsFlagMarkerSet => AgentMap.Instance()->IsFlagMarkerSet > 0;
+        
+        internal static unsafe FlagMapMarker GetFlagMarker => AgentMap.Instance()->FlagMapMarker;
+
         internal static Vector2 ConvertWorldXZToMap(Vector2 coords, Map map) => Dalamud.Utility.MapUtil.WorldToMap(coords, map.OffsetX, map.OffsetY, map.SizeFactor);
 
         internal static Vector2 ConvertMarkerToMap(MapMarker mapMarker, Map map) => new((float)(mapMarker.X * 42.0 / 2048 / map.SizeFactor * 100 + 1), (float)(mapMarker.Y * 42.0 / 2048 / map.SizeFactor * 100 + 1));
@@ -70,6 +81,76 @@ namespace AutoDuty.Helpers
             }
 
             return closestAetheryte;
+        }
+
+        internal static void MoveToMapMarker()
+        {
+            if (!IsFlagMarkerSet)
+            {
+                Svc.Log.Info("There is no flag marker set");
+                return;
+            }
+            Svc.Log.Info("Moving to Flag Marker");
+            MoveToMapMarkerRunning = true;
+            Svc.Framework.Update += MoveToMapMarkerUpdate;
+        }
+
+        internal static bool MoveToMapMarkerRunning = false;
+
+        private static uint flagMapMarkerTerritoryType = 0;
+
+        internal unsafe static void StopMoveToMapMarker()
+        {
+            flagMapMarkerTerritoryType = 0;
+            Svc.Framework.Update -= MoveToMapMarkerUpdate;
+            VNavmesh_IPCSubscriber.Path_Stop();
+            MoveToMapMarkerRunning = false;
+        }
+
+        internal unsafe static void MoveToMapMarkerUpdate(IFramework _)
+        {
+            if (!EzThrottler.Throttle("MoveToMapMarker"))
+                return;
+
+            if (!ObjectHelper.IsReady)
+                return;
+
+            if (GotoHelper.GotoRunning)
+                return;
+
+            if (VNavmesh_IPCSubscriber.Path_IsRunning())
+                return;
+
+            if (GenericHelpers.TryGetAddonByName("AreaMap", out AddonAreaMap* addonAreaMap) && GenericHelpers.IsAddonReady(&addonAreaMap->AtkUnitBase))
+                addonAreaMap->Close(true);
+
+            if (!GotoHelper.GotoRunning && Svc.ClientState.TerritoryType == flagMapMarkerTerritoryType)
+            {
+                if (!Conditions.IsMounted)
+                {
+                    if (!ObjectHelper.PlayerIsCasting)
+                        ActionManager.Instance()->UseAction(ActionType.GeneralAction, 9);
+                }
+                else if (!Conditions.IsInFlight)
+                {
+                    if (!ObjectHelper.PlayerIsCasting)
+                        ActionManager.Instance()->UseAction(ActionType.GeneralAction, 2);
+                }
+                else
+                {
+                    Svc.Log.Info("Done Moving to Flag Marker");
+                    new ECommons.Automation.Chat().ExecuteCommand("/vnavmesh flyflag");
+                    StopMoveToMapMarker();
+                }
+                return;
+            }
+
+            if (IsFlagMarkerSet)
+            {
+                var flagMapMarker = GetFlagMarker;
+                flagMapMarkerTerritoryType = flagMapMarker.TerritoryId;
+                GotoHelper.Invoke(flagMapMarker.TerritoryId, []);
+            }
         }
     }
 }

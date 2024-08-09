@@ -87,7 +87,7 @@ public sealed class AutoDuty : IDalamudPlugin
     private ActionsManager _actions;
     private Chat _chat;
     private DutySupportManager _dutySupportManager;
-    private TrustManager _trustManager;
+    internal TrustManager _trustManager;
     private SquadronManager _squadronManager;
     private VariantManager _variantManager;
     private OverrideAFK _overrideAFK;
@@ -127,6 +127,7 @@ public sealed class AutoDuty : IDalamudPlugin
                 TimeoutSilently = true
             };
 
+            TrustManager.PopulateTrustMembers();
             ContentHelper.PopulateDuties();
             FileHelper.OnStart();
             FileHelper.Init();
@@ -170,7 +171,8 @@ public sealed class AutoDuty : IDalamudPlugin
                 "/autoduty moveto -> move's to territorytype and location sent\n" +
                 "/autoduty overlay -> opens overlay\n" +
                 "/autoduty overlay lock-> toggles locking the overlay\n" +
-                "/autoduty overlay nobg-> toggles the overlay's background\n"
+                "/autoduty overlay nobg-> toggles the overlay's background\n" +
+                "/autoduty skipstep-> skips to the next step in the path\n"
             });
 
             PluginInterface.UiBuilder.Draw += DrawUI;
@@ -298,12 +300,18 @@ public sealed class AutoDuty : IDalamudPlugin
                 TaskManager.Enqueue(() => { Action = $"Waiting {Configuration.WaitTimeBeforeAfterLoopActions}s"; }, "Loop-WaitTimeBeforeAfterLoopActionsActionSet");
                 TaskManager.DelayNext("Loop-WaitTimeBeforeAfterLoopActions", Configuration.WaitTimeBeforeAfterLoopActions * 1000);
                 TaskManager.Enqueue(() => { Action = $"After Loop Actions"; }, "Loop-AfterLoopActionsSetAction");
+                if (Configuration.AutoBoiledEgg)
+                {
+                    TaskManager.Enqueue(() => { if (InventoryHelper.ItemCount(4650) > 1 && !PlayerHelper.HasStatus(48)) InventoryHelper.UseItem(4650); }, "Loop-AutoBoiledEgg");
+                    TaskManager.DelayNext("Loop-Delay50", 50);
+                }
+
                 if (Configuration.AutoEquipRecommendedGear)
                 {
-                    TaskManager.Enqueue(() => AutoEquipHelper.Invoke(TaskManager), "Run-AutoEquip");
-                    TaskManager.DelayNext("Run-Delay50", 50);
-                    TaskManager.Enqueue(() => !AutoEquipHelper.AutoEquipRunning, int.MaxValue, "Run-WaitAutoEquipComplete");
-                    TaskManager.Enqueue(() => !ObjectHelper.IsOccupied,          "Run-WaitANotIsOccupied");
+                    TaskManager.Enqueue(() => AutoEquipHelper.Invoke(), "Loop-AutoEquip");
+                    TaskManager.DelayNext("Loop-Delay50", 50);
+                    TaskManager.Enqueue(() => !AutoEquipHelper.AutoEquipRunning, int.MaxValue, "Loop-WaitAutoEquipComplete");
+                    TaskManager.Enqueue(() => !ObjectHelper.IsOccupied, "Loop-WaitANotIsOccupied");
                 }
 
                 TaskManager.Enqueue(() => {
@@ -324,7 +332,18 @@ public sealed class AutoDuty : IDalamudPlugin
     private unsafe void LoopTasks()
     {
         if (CurrentTerritoryContent == null) return;
-
+        if (Configuration.EnableAutoRetainer && AutoRetainer_IPCSubscriber.IsEnabled && AutoRetainer_IPCSubscriber.AreAnyRetainersAvailableForCurrentChara())
+        {
+            TaskManager.Enqueue(() => AutoRetainerHelper.Invoke(), "Loop-AutoRetainer");
+            TaskManager.DelayNext("Loop-Delay50", 50);
+            TaskManager.Enqueue(() => !AutoRetainerHelper.AutoRetainerRunning, int.MaxValue, "Loop-WaitAutoRetainerComplete");
+        }
+        if (Configuration.AM)
+        {
+            TaskManager.Enqueue(() => AMHelper.Invoke(), "Loop-AM");
+            TaskManager.DelayNext("Loop-Delay50", 50);
+            TaskManager.Enqueue(() => !AMHelper.AMRunning, int.MaxValue, "Loop-WaitAMComplete");
+        }
         if (Configuration.AutoRepair && InventoryHelper.CanRepair())
         {
             TaskManager.Enqueue(() => RepairHelper.Invoke(), "Loop-AutoRepair");
@@ -350,6 +369,7 @@ public sealed class AutoDuty : IDalamudPlugin
             TaskManager.DelayNext("Loop-Delay50", 50);
             TaskManager.Enqueue(() => !DesynthHelper.DesynthRunning, int.MaxValue, "Loop-WaitAutoDesynthComplete");
         }
+        
         if (!Configuration.Squadron)
         {
             if (Configuration.RetireToBarracksBeforeLoops)
@@ -362,7 +382,7 @@ public sealed class AutoDuty : IDalamudPlugin
         if (LevelingEnabled)
         {
             Svc.Log.Info("Leveling Enabled");
-            ContentHelper.Content? duty = LevelingHelper.SelectHighestLevelingRelevantDuty(out int _);
+            ContentHelper.Content? duty = LevelingHelper.SelectHighestLevelingRelevantDuty();
             if (duty != null)
             {
                 Svc.Log.Info("Next Leveling Duty: " + duty.DisplayName);
@@ -479,6 +499,11 @@ public sealed class AutoDuty : IDalamudPlugin
         Svc.Log.Info($"Running {CurrentTerritoryContent.DisplayName} {Configuration.LoopTimes} Times");
         if (!InDungeon)
         {
+            if (Configuration.AutoBoiledEgg && InventoryHelper.ItemCount(4650) > 1 && !PlayerHelper.HasStatus(48))
+            {
+                TaskManager.Enqueue(() => InventoryHelper.UseItem(4650), "Run-AutoBoiledEgg");
+                TaskManager.DelayNext("Run-Delay50", 50);
+            }
             if (Configuration.AutoRepair && InventoryHelper.CanRepair())
             {
                 TaskManager.Enqueue(() => RepairHelper.Invoke(), "Run-AutoRepair");
@@ -748,7 +773,7 @@ public sealed class AutoDuty : IDalamudPlugin
             {
                 if (LevelingEnabled)
                 {
-                    ContentHelper.Content? duty = LevelingHelper.SelectHighestLevelingRelevantDuty(out int index);
+                    ContentHelper.Content? duty = LevelingHelper.SelectHighestLevelingRelevantDuty();
                     if (duty != null)
                     {
                         Plugin.CurrentTerritoryContent = duty;
@@ -1131,6 +1156,7 @@ public sealed class AutoDuty : IDalamudPlugin
             case 99:
                 if (!ObjectHelper.IsReady)
                     return;
+
                 break;
             default:
                 break;
@@ -1175,8 +1201,14 @@ public sealed class AutoDuty : IDalamudPlugin
             RepairHelper.Stop();
         if (QueueHelper.QueueRunning)
             QueueHelper.Stop();
+        if (AMHelper.AMRunning)
+            AMHelper.Stop();
+        if (AutoRetainerHelper.AutoRetainerRunning)
+            AutoRetainerHelper.Stop();
         if (VNavmesh_IPCSubscriber.IsEnabled && VNavmesh_IPCSubscriber.Path_IsRunning())
             VNavmesh_IPCSubscriber.Path_Stop();
+        if (MapHelper.MoveToMapMarkerRunning)
+            MapHelper.StopMoveToMapMarker();
         Action = "";
     }
 
@@ -1302,6 +1334,13 @@ public sealed class AutoDuty : IDalamudPlugin
                     Indexer++;
                     Stage = 1;
                 }
+                break;
+            case "am":
+                Configuration.UnhideAM = !Configuration.UnhideAM;
+                Configuration.Save();
+                break;
+            case "movetoflag":
+                MapHelper.MoveToMapMarker();
                 break;
             default:
                 OpenMainUI(); 

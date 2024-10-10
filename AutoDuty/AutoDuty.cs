@@ -37,11 +37,11 @@ using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using Serilog.Events;
 using AutoDuty.Updater;
-using System.Threading.Tasks;
 
 namespace AutoDuty;
 
 // TODO:
+// Scrapped interable list, going to implement an internal list that when a interactable step end in fail, the Dataid gets add to the list and is scanned for from there on out, if found we goto it and get it, then remove from list.
 // Need to expand AutoRepair to include check for level and stuff to see if you are eligible for self repair. and check for dark matter
 // make config saving per character
 // drap drop on build is jacked when theres scrolling
@@ -218,7 +218,6 @@ public sealed class AutoDuty : IDalamudPlugin
             RepairNPCHelper.PopulateRepairNPCs();
             FileHelper.Init();
             Patcher.Patch();
-
             Chat = new();
             _overrideAFK = new();
             _ipcProvider = new();
@@ -337,7 +336,6 @@ public sealed class AutoDuty : IDalamudPlugin
 
             PathFile = path?.FilePath ?? "";
             Actions = [.. path?.Actions];
-            Interactables = [.. path?.Interactables];
             //Svc.Log.Info($"Loading Path: {CurrentPath} {ListBoxPOSText.Count}");
         }
         catch (Exception e)
@@ -405,7 +403,8 @@ public sealed class AutoDuty : IDalamudPlugin
                 if (Configuration.EnableBetweenLoopActions)
                 {
                     TaskManager.Enqueue(() => { Action = $"Waiting {Configuration.WaitTimeBeforeAfterLoopActions}s"; }, "Loop-WaitTimeBeforeAfterLoopActionsActionSet");
-                    TaskManager.DelayNext("Loop-WaitTimeBeforeAfterLoopActions", Configuration.WaitTimeBeforeAfterLoopActions * 1000);
+                    TaskManager.Enqueue(() => EzThrottler.Throttle("Loop-WaitTimeBeforeAfterLoopActions", Configuration.WaitTimeBeforeAfterLoopActions * 1000), "Loop-WaitTimeBeforeAfterLoopActionsThrottle");
+                    TaskManager.Enqueue(() => EzThrottler.Check("Loop-WaitTimeBeforeAfterLoopActions"), Configuration.WaitTimeBeforeAfterLoopActions * 1000, "Loop-WaitTimeBeforeAfterLoopActionsCheck");
                     TaskManager.Enqueue(() => { Action = $"After Loop Actions"; }, "Loop-AfterLoopActionsSetAction");
                 }
 
@@ -876,7 +875,7 @@ public sealed class AutoDuty : IDalamudPlugin
         if (!VNavmesh_IPCSubscriber.SimpleMove_PathfindInProgress() && !VNavmesh_IPCSubscriber.Path_IsRunning())
         {
             VNavmesh_IPCSubscriber.Path_SetTolerance(0.25f);
-            if (PathAction.Name == "MoveTo" && bool.TryParse(PathAction.Arguments[0], out bool useMesh) && !useMesh)
+            if (PathAction.Name == "MoveTo" && PathAction.Arguments.Count > 0 && bool.TryParse(PathAction.Arguments[0], out bool useMesh) && !useMesh)
                 VNavmesh_IPCSubscriber.Path_MoveTo([PathAction.Position], false);
             else
                 VNavmesh_IPCSubscriber.SimpleMove_PathfindAndMoveTo(PathAction.Position, false);
@@ -938,7 +937,7 @@ public sealed class AutoDuty : IDalamudPlugin
             return;
         }
 
-        if (EzThrottler.Throttle("BossChecker", 25) && PathAction.Equals("Boss") && PathAction.Position != Vector3.Zero && ObjectHelper.GetDistanceToPlayer(PathAction.Position) < 50)
+        if (EzThrottler.Throttle("BossChecker", 25) && PathAction.Equals("Boss") && PathAction.Position != Vector3.Zero && ObjectHelper.BelowDistanceToPlayer(PathAction.Position, 50, 10))
         {
             BossObject = ObjectHelper.GetBossObject(25);
             if (BossObject != null)
@@ -1082,9 +1081,7 @@ public sealed class AutoDuty : IDalamudPlugin
         StopForCombat = true;
         if (Configuration.AutoManageVnavAlignCamera && !VNavmesh_IPCSubscriber.Path_GetAlignCamera())
             VNavmesh_IPCSubscriber.Path_SetAlignCamera(true);
-        //Chat.ExecuteCommand($"/vbm cfg AIConfig Enable true");
-        //if (IPCSubscriber_Common.IsReady("BossModReborn"))
-           //Chat.ExecuteCommand($"/vbmai on");
+
         if (Configuration.AutoManageBossModAISettings)
             SetBMSettings();
         if (Configuration.AutoManageRotationPluginState && !Configuration.UsingAlternativeRotationPlugin)
@@ -1118,9 +1115,11 @@ public sealed class AutoDuty : IDalamudPlugin
                 ExitDuty();
             if (Configuration.AutoManageRotationPluginState && !Configuration.UsingAlternativeRotationPlugin)
                 SetRotationPluginSettings(false);
-
-            //Chat.ExecuteCommand($"/vbmai off");
-            //Chat.ExecuteCommand($"/vbm cfg AIConfig Enable false");
+            if (Configuration.AutoManageBossModAISettings)
+            {
+                Chat.ExecuteCommand($"/vbmai off");
+                Chat.ExecuteCommand($"/vbm cfg AIConfig Enable false");
+            }
             States &= ~PluginState.Navigating;
         }
         else
@@ -1222,7 +1221,8 @@ public sealed class AutoDuty : IDalamudPlugin
             Configuration.MaxDistanceToTargetRoleBased = true;
             Configuration.PositionalRoleBased = true;
         }
-
+        Chat.ExecuteCommand($"/vbmai on");
+        Chat.ExecuteCommand($"/vbm cfg AIConfig Enable true");
         Chat.ExecuteCommand($"/vbm cfg AIConfig ForbidActions false");
         Chat.ExecuteCommand($"/vbm cfg AIConfig ForbidMovement false");
         Chat.ExecuteCommand($"/vbm cfg AIConfig FollowDuringCombat {Configuration.FollowDuringCombat}");
@@ -1423,8 +1423,11 @@ public sealed class AutoDuty : IDalamudPlugin
         MainListClicked = false;
         if (!InDungeon)
             CurrentLoop = 0;
-        Chat.ExecuteCommand($"/vbmai off");
-        Chat.ExecuteCommand($"/vbm cfg AIConfig Enable false");
+        if (Configuration.AutoManageBossModAISettings)
+        {
+            Chat.ExecuteCommand($"/vbmai off");
+            Chat.ExecuteCommand($"/vbm cfg AIConfig Enable false");
+        }
         SetGeneralSettings(true);
         if (Configuration.AutoManageRotationPluginState && !Configuration.UsingAlternativeRotationPlugin)
             SetRotationPluginSettings(false);
@@ -1472,7 +1475,7 @@ public sealed class AutoDuty : IDalamudPlugin
 
     public void Dispose()
     {
-        S3.Dispose();
+        GitHubHelper.Dispose();
         StopAndResetALL();
         Svc.Framework.Update -= Framework_Update;
         Svc.Framework.Update -= SchedulerHelper.ScheduleInvoker;

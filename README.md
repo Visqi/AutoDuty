@@ -1,3 +1,10 @@
+<div align="center">
+  <h1 style="color:#b22222">ARCHIVED — Active development moved</h1>
+  <p><strong>This repository is archived. Active development now continues on a fork:</strong></p>
+  <p><strong><a href="https://github.com/erdelf/AutoDuty">https://github.com/erdelf/AutoDuty</a></strong></p>
+  <p><strong>Please open issues and pull requests there.</strong></p>
+</div>
+
 # AutoDuty
 
 <img align="right" width="150" height="150" src="logo.png">
